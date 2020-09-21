@@ -140,31 +140,36 @@ class ReplayBuffer(object):
             self.idx = end
 
 
-class FrameStack(gym.Wrapper):
+class FrameStack():
     def __init__(self, env, k):
-        gym.Wrapper.__init__(self, env)
+        self.env = env
         self._k = k
         self._frames = deque([], maxlen=k)
-        shp = env.observation_space.shape
-        self.observation_space = gym.spaces.Box(
-            low=0,
-            high=1,
-            shape=((shp[0] * k,) + shp[1:]),
-            dtype=env.observation_space.dtype
-        )
-        self._max_episode_steps = env._max_episode_steps
+        self._robot_state = None
+        self.observation_space ={
+            "proprioception": env.observation_space["proprioception"],
+            "camera": (k*env.observation_space["camera"][0],env.observation_space["camera"][1],env.observation_space["camera"][2])
+        }
+        self.action_space = env.action_space
+        self._max_episode_steps = 300
+        self.reset()
 
     def reset(self):
         obs = self.env.reset()
+        if self.env.observation_type['q'] or self.env.observation_type['x']: self._robot_state = obs[1]
         for _ in range(self._k):
-            self._frames.append(obs)
+            self._frames.append(obs[0])
         return self._get_obs()
 
     def step(self, action):
         obs, reward, done, info = self.env.step(action)
-        self._frames.append(obs)
+        self._frames.append(obs[0])
+        if self.env.observation_type['q'] or self.env.observation_type['x']: self._robot_state = obs[1]
         return self._get_obs(), reward, done, info
 
     def _get_obs(self):
         assert len(self._frames) == self._k
-        return np.concatenate(list(self._frames), axis=0)
+        obs = ()
+        if self.env.observation_type['camera']: obs = obs + (np.concatenate(list(self._frames), axis=0),)
+        if self.env.observation_type['q'] or self.env.observation_type['x']: obs = obs + (self.robot_state,)
+        return obs

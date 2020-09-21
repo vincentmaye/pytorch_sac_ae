@@ -1,2 +1,0 @@
-from sai2_environment.tasks.move_object_to_target import MoveObjectToTarget
-from sai2_environment.tasks.peg_in_hole import PegInHole

@@ -16,44 +16,40 @@ from video import VideoRecorder
 
 from sac_ae import SacAeAgent
 
+from sai2_environment.robot_env import RobotEnv
+from sai2_environment.action_space import ActionSpace
 
+param_set = 'default' # should be mini or default
+save = True # True or false, if FTrue save model etc., else save nothing
 
 def parse_args():
     parser = argparse.ArgumentParser()
-    # environment
-    parser.add_argument('--domain_name', default='cheetah')
-    parser.add_argument('--task_name', default='run')
+     # environment
+    parser.add_argument('--domain_name', default='panda')
+    parser.add_argument('--task_name', default='peg_in_hole')
     parser.add_argument('--image_size', default=128, type=int)
     parser.add_argument('--action_repeat', default=1, type=int)
     parser.add_argument('--frame_stack', default=3, type=int)
-    # replay buffer
-    parser.add_argument('--replay_buffer_capacity', default=1000000, type=int)
-    # train
     parser.add_argument('--agent', default='sac_ae', type=str)
-    parser.add_argument('--init_steps', default=1000, type=int)
-    parser.add_argument('--num_train_steps', default=1000000, type=int)
-    parser.add_argument('--batch_size', default=128, type=int)
-    parser.add_argument('--hidden_dim', default=1024, type=int)
-    # eval
-    parser.add_argument('--eval_freq', default=10000, type=int)
-    parser.add_argument('--num_eval_episodes', default=10, type=int)
     # critic
     parser.add_argument('--critic_lr', default=1e-3, type=float)
     parser.add_argument('--critic_beta', default=0.9, type=float)
     parser.add_argument('--critic_tau', default=0.01, type=float)
-    parser.add_argument('--critic_target_update_freq', default=2, type=int)
     # actor
     parser.add_argument('--actor_lr', default=1e-3, type=float)
     parser.add_argument('--actor_beta', default=0.9, type=float)
     parser.add_argument('--actor_log_std_min', default=-10, type=float)
     parser.add_argument('--actor_log_std_max', default=2, type=float)
-    parser.add_argument('--actor_update_freq', default=2, type=int)
     # encoder/decoder
     parser.add_argument('--encoder_type', default='pixel', type=str)
     parser.add_argument('--encoder_feature_dim', default=50, type=int)
     parser.add_argument('--encoder_lr', default=1e-3, type=float)
     parser.add_argument('--encoder_tau', default=0.05, type=float)
+    parser.add_argument('--alpha_beta', default=0.5, type=float)
     parser.add_argument('--decoder_type', default='pixel', type=str)
+    # misc
+    parser.add_argument('--seed', default=1, type=int)
+    parser.add_argument('--work_dir', default='.', type=str)
     parser.add_argument('--decoder_lr', default=1e-3, type=float)
     parser.add_argument('--decoder_update_freq', default=1, type=int)
     parser.add_argument('--decoder_latent_lambda', default=1e-6, type=float)
@@ -64,14 +60,44 @@ def parse_args():
     parser.add_argument('--discount', default=0.99, type=float)
     parser.add_argument('--init_temperature', default=0.1, type=float)
     parser.add_argument('--alpha_lr', default=1e-4, type=float)
-    parser.add_argument('--alpha_beta', default=0.5, type=float)
-    # misc
-    parser.add_argument('--seed', default=1, type=int)
-    parser.add_argument('--work_dir', default='.', type=str)
-    parser.add_argument('--save_tb', default=False, action='store_true')
-    parser.add_argument('--save_model', default=False, action='store_true')
-    parser.add_argument('--save_buffer', default=False, action='store_true')
-    parser.add_argument('--save_video', default=False, action='store_true')
+    # save
+    parser.add_argument('--save_tb', default=save, action='store_true')
+    parser.add_argument('--save_model', default=save, action='store_true')
+    parser.add_argument('--save_buffer', default=save, action='store_true')
+    parser.add_argument('--save_video', default=save, action='store_true')
+
+
+    if param_set == 'default':
+        # replay buffer
+        parser.add_argument('--replay_buffer_capacity', default=100000, type=int) # Changed from 1e7 to 1e6
+        # train
+        parser.add_argument('--init_steps', default=1000, type=int) # Was 1000 before
+        parser.add_argument('--num_train_steps', default=100000, type=int)
+        parser.add_argument('--batch_size', default=128, type=int)
+        parser.add_argument('--hidden_dim', default=1024, type=int)
+        # eval
+        parser.add_argument('--eval_freq', default=10000, type=int)
+        parser.add_argument('--num_eval_episodes', default=10, type=int)
+        # critic
+        parser.add_argument('--critic_target_update_freq', default=2, type=int)
+        # actor
+        parser.add_argument('--actor_update_freq', default=2, type=int)
+
+    elif param_set == 'mini':
+        # replay buffer
+        parser.add_argument('--replay_buffer_capacity', default=100000, type=int) # Changed from 1e7 to 1e6
+        # train
+        parser.add_argument('--init_steps', default=100, type=int) # Was 1000 before
+        parser.add_argument('--num_train_steps', default=100000, type=int)
+        parser.add_argument('--batch_size', default=128, type=int)
+        parser.add_argument('--hidden_dim', default=1024, type=int)
+        # eval
+        parser.add_argument('--eval_freq', default=1000, type=int)
+        parser.add_argument('--num_eval_episodes', default=5, type=int)
+        # critic
+        parser.add_argument('--critic_target_update_freq', default=2, type=int)
+        # actor
+        parser.add_argument('--actor_update_freq', default=2, type=int)
 
     args = parser.parse_args()
     return args
@@ -79,6 +105,8 @@ def parse_args():
 
 def evaluate(env, agent, video, num_episodes, L, step):
     for i in range(num_episodes):
+        a_anti_stuck = np.array([0,0,0.1,0,0,0])
+        env.step(a_anti_stuck)
         obs = env.reset()
         video.init(enabled=(i == 0))
         done = False
@@ -86,10 +114,10 @@ def evaluate(env, agent, video, num_episodes, L, step):
         while not done:
             with utils.eval_mode(agent):
                 action = agent.select_action(obs)
+                print("Evaluation action: {}".format(action))
             obs, reward, done, _ = env.step(action)
             video.record(env)
             episode_reward += reward
-
         video.save('%d.mp4' % step)
         L.log('eval/episode_reward', episode_reward, step)
     L.dump(step)
@@ -135,17 +163,18 @@ def main():
     args = parse_args()
     utils.set_seed_everywhere(args.seed)
 
-    env = dmc2gym.make(
-        domain_name=args.domain_name,
-        task_name=args.task_name,
-        seed=args.seed,
-        visualize_reward=False,
-        from_pixels=(args.encoder_type == 'pixel'),
-        height=args.image_size,
-        width=args.image_size,
-        frame_skip=args.action_repeat
-    )
-    env.seed(args.seed)
+    # Robot stuff
+    action_space = ActionSpace.DELTA_EE_POSE_IMPEDANCE 
+    blocking_action = True
+    env = RobotEnv(name='peg_in_hole',
+                   simulation=True,
+                   action_space=action_space,
+                   isotropic_gains=True,
+                   render=False,
+                   blocking_action=blocking_action,
+                   rotation_axis=(0, 0, 1),
+                   observation_type=dict(camera=1, q=0, dq=0, tau=0, x=0, dx=0))    
+
 
     # stack several consecutive frames together
     if args.encoder_type == 'pixel':
@@ -164,11 +193,11 @@ def main():
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
     # the dmc2gym wrapper standardizes actions
-    assert env.action_space.low.min() >= -1
-    assert env.action_space.high.max() <= 1
+    #assert env.action_space.low.min() >= -1
+    #assert env.action_space.high.max() <= 1
 
     replay_buffer = utils.ReplayBuffer(
-        obs_shape=env.observation_space.shape,
+        obs_shape=env.observation_space['camera'],
         action_shape=env.action_space.shape,
         capacity=args.replay_buffer_capacity,
         batch_size=args.batch_size,
@@ -176,7 +205,7 @@ def main():
     )
 
     agent = make_agent(
-        obs_shape=env.observation_space.shape,
+        obs_shape=env.observation_space['camera'],
         action_shape=env.action_space.shape,
         args=args,
         device=device
@@ -194,7 +223,7 @@ def main():
                 L.dump(step)
 
             # evaluate agent periodically
-            if step % args.eval_freq == 0:
+            if step % args.eval_freq == 0 and step > 0:
                 L.log('eval/episode', episode, step)
                 evaluate(env, agent, video, args.num_eval_episodes, L, step)
                 if args.save_model:
@@ -204,6 +233,8 @@ def main():
 
             L.log('train/episode_reward', episode_reward, step)
 
+            a_anti_stuck = np.array([0,0,0.1,0,0,0])
+            env.step(a_anti_stuck)
             obs = env.reset()
             done = False
             episode_reward = 0
@@ -226,6 +257,7 @@ def main():
                 agent.update(replay_buffer, L, step)
 
         next_obs, reward, done, _ = env.step(action)
+        print("E: {}   | S: {}   | R: {:.4f} | ER: {:.4f}".format(episode, step, round(reward,4), round(episode_reward,4)))
 
         # allow infinit bootstrap
         done_bool = 0 if episode_step + 1 == env._max_episode_steps else float(

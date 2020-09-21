@@ -302,7 +302,7 @@ class SacAeAgent(object):
     def select_action(self, obs):
         with torch.no_grad():
             obs = torch.FloatTensor(obs).to(self.device)
-            obs = obs.unsqueeze(0)
+            #obs = obs.unsqueeze(0)
             mu, _, _, _ = self.actor(
                 obs, compute_pi=False, compute_log_pi=False
             )
@@ -311,7 +311,7 @@ class SacAeAgent(object):
     def sample_action(self, obs):
         with torch.no_grad():
             obs = torch.FloatTensor(obs).to(self.device)
-            obs = obs.unsqueeze(0)
+            #obs = obs.unsqueeze(0)
             mu, pi, _, _ = self.actor(obs, compute_log_pi=False)
             return pi.cpu().data.numpy().flatten()
 

@@ -8,8 +8,8 @@ def tie_weights(src, trg):
     trg.bias = src.bias
 
 
-OUT_DIM = {2: 39, 4: 35, 6: 31}
-
+# This is for 84x84: OUT_DIM = {2: 39, 4: 35, 6: 31}
+OUT_DIM = {2: 61, 4: 57, 6: 53}
 
 class PixelEncoder(nn.Module):
     """Convolutional encoder of pixels observations."""

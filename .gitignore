@@ -1,3 +1,8 @@
 __pycache__/
 .ipynb_checkpoints/
 runs
+.env
+.vscode/
+args.json
+tb/
+utils2.py

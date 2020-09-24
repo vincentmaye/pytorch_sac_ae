@@ -126,11 +126,11 @@ def evaluate(env, agent, video, num_episodes, L, step):
     L.dump(step)
 
 
-def make_agent(obs_shape, action_shape, args, device):
+def make_agent(obs_space, act_space, args, device):
     if args.agent == 'sac_ae':
         return SacAeAgent(
-            obs_shape=obs_shape,
-            action_shape=action_shape,
+            obs_space=obs_space,
+            act_space=act_space,
             device=device,
             hidden_dim=args.hidden_dim,
             discount=args.discount,
@@ -176,7 +176,7 @@ def main():
                    render=False,
                    blocking_action=blocking_action,
                    rotation_axis=(0, 0, 1),
-                   observation_type=dict(camera=1, q=0, dq=0, tau=0, x=0, dx=0))    
+                   observation_type=dict(camera=1, q=0, dq=0, tau=0, x=1, dx=1))    
 
 
     # stack several consecutive frames together
@@ -200,16 +200,16 @@ def main():
     #assert env.action_space.high.max()  <=  1
 
     replay_buffer = utils.ReplayBuffer(
-        obs_shape=env.observation_space['camera'],
-        action_shape=env.action_space.shape,
+        obs_space=env.observation_space,
+        act_space=env.action_space,
         capacity=args.replay_buffer_capacity,
         batch_size=args.batch_size,
         device=device
     )
 
     agent = make_agent(
-        obs_shape=env.observation_space['camera'],
-        action_shape=env.action_space.shape,
+        obs_space=env.observation_space,
+        act_space=env.action_space,
         args=args,
         device=device
     )
@@ -226,7 +226,7 @@ def main():
                 L.dump(step)
 
             # evaluate agent periodically
-            if step % args.eval_freq == 0 and step > 0:
+            if step % args.eval_freq == 0 and step > 0: # Added the step > 0 condition
                 L.log('eval/episode', episode, step)
                 evaluate(env, agent, video, args.num_eval_episodes, L, step)
                 if args.save_model:

@@ -67,17 +67,18 @@ def preprocess_obs(obs, bits=5):
 
 class ReplayBuffer(object):
     """Buffer to store environment transitions."""
-    def __init__(self, obs_shape, action_shape, capacity, batch_size, device):
+    def __init__(self, obs_space, act_space, capacity, batch_size, device):
+        self.obs_space = obs_space
+        self.act_space = act_space
         self.capacity = capacity
         self.batch_size = batch_size
         self.device = device
 
-        # the proprioceptive obs is stored as float32, pixels obs as uint8
-        obs_dtype = np.float32 if len(obs_shape) == 1 else np.uint8
-
-        self.obses = np.empty((capacity, *obs_shape), dtype=obs_dtype)
-        self.next_obses = np.empty((capacity, *obs_shape), dtype=obs_dtype)
-        self.actions = np.empty((capacity, *action_shape), dtype=np.float32)
+        self.cam = np.empty((capacity, *obs_space['camera']), dtype=np.uint8)
+        self.proprio = np.empty((capacity, *obs_space['proprioception']), dtype=np.float32) if "proprioception" in obs_space else None
+        self.next_cam = np.empty((capacity, *obs_space['camera']), dtype=np.uint8)
+        self.next_proprio = np.empty((capacity, *obs_space['proprioception']), dtype=np.float32) if "proprioception" in obs_space else None
+        self.actions = np.empty((capacity, *act_space.shape), dtype=np.float32)
         self.rewards = np.empty((capacity, 1), dtype=np.float32)
         self.not_dones = np.empty((capacity, 1), dtype=np.float32)
 
@@ -86,10 +87,12 @@ class ReplayBuffer(object):
         self.full = False
 
     def add(self, obs, action, reward, next_obs, done):
-        np.copyto(self.obses[self.idx], obs)
+        np.copyto(self.cam[self.idx], obs[0])
+        if "proprioception" in self.obs_space: np.copyto(self.proprio[self.idx], obs[1])
         np.copyto(self.actions[self.idx], action)
         np.copyto(self.rewards[self.idx], reward)
-        np.copyto(self.next_obses[self.idx], next_obs)
+        np.copyto(self.next_cam[self.idx], next_obs[0])
+        if "proprioception" in self.obs_space: np.copyto(self.next_proprio[self.idx], next_obs[1])
         np.copyto(self.not_dones[self.idx], not done)
 
         self.idx = (self.idx + 1) % self.capacity
@@ -99,16 +102,20 @@ class ReplayBuffer(object):
         idxs = np.random.randint(
             0, self.capacity if self.full else self.idx, size=self.batch_size
         )
+        if "proprioception" in self.obs_space:
+            obses = [torch.as_tensor(self.cam[idxs], device=self.device).float(), torch.as_tensor(self.proprio[idxs], device=self.device).float()]
+            actions = torch.as_tensor(self.actions[idxs], device=self.device)
+            rewards = torch.as_tensor(self.rewards[idxs], device=self.device)
+            next_obses = [torch.as_tensor(self.next_cam[idxs], device=self.device).float(), torch.as_tensor(self.next_proprio[idxs], device=self.device).float()]
+            not_dones = torch.as_tensor(self.not_dones[idxs], device=self.device) 
+        else:
+            obses = torch.as_tensor(self.cam[idxs], device=self.device).float()
+            actions = torch.as_tensor(self.actions[idxs], device=self.device)
+            rewards = torch.as_tensor(self.rewards[idxs], device=self.device)
+            next_obses = torch.as_tensor(self.next_cam[idxs], device=self.device).float()
+            not_dones = torch.as_tensor(self.not_dones[idxs], device=self.device)
 
-        obses = torch.as_tensor(self.obses[idxs], device=self.device).float()
-        actions = torch.as_tensor(self.actions[idxs], device=self.device)
-        rewards = torch.as_tensor(self.rewards[idxs], device=self.device)
-        next_obses = torch.as_tensor(
-            self.next_obses[idxs], device=self.device
-        ).float()
-        not_dones = torch.as_tensor(self.not_dones[idxs], device=self.device)
-
-        return obses, actions, rewards, next_obses, not_dones
+        return obses, actions, rewards, next_obses, not_dones 
 
     def save(self, save_dir):
         if self.idx == self.last_save:
@@ -171,5 +178,5 @@ class FrameStack():
         assert len(self._frames) == self._k
         obs = ()
         if self.env.observation_type['camera']: obs = obs + (np.concatenate(list(self._frames), axis=0),)
-        if self.env.observation_type['q'] or self.env.observation_type['x']: obs = obs + (self.robot_state,)
+        if self.env.observation_type['q'] or self.env.observation_type['x']: obs = obs + (self._robot_state,)
         return obs

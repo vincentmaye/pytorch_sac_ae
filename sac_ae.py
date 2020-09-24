@@ -48,34 +48,38 @@ def weight_init(m):
 class Actor(nn.Module):
     """MLP actor network."""
     def __init__(
-        self, obs_shape, action_shape, hidden_dim, encoder_type,
+        self, obs_space, act_space, hidden_dim, encoder_type,
         encoder_feature_dim, log_std_min, log_std_max, num_layers, num_filters
     ):
         super().__init__()
-
+        self.obs_space = obs_space
+        self.act_space = act_space
         self.encoder = make_encoder(
-            encoder_type, obs_shape, encoder_feature_dim, num_layers,
+            encoder_type, obs_space['camera'], encoder_feature_dim, num_layers,
             num_filters
         )
 
         self.log_std_min = log_std_min
         self.log_std_max = log_std_max
+        self.feature_dim = encoder_feature_dim + obs_space['proprioception'][0] if 'proprioception' in obs_space else encoder_feature_dim
 
         self.trunk = nn.Sequential(
-            nn.Linear(self.encoder.feature_dim, hidden_dim), nn.ReLU(),
+            nn.Linear(self.feature_dim, hidden_dim), nn.ReLU(),
             nn.Linear(hidden_dim, hidden_dim), nn.ReLU(),
-            nn.Linear(hidden_dim, 2 * action_shape[0])
+            nn.Linear(hidden_dim, 2 * act_space.shape[0])
         )
 
         self.outputs = dict()
         self.apply(weight_init)
 
-    def forward(
-        self, obs, compute_pi=True, compute_log_pi=True, detach_encoder=False
-    ):
-        obs = self.encoder(obs, detach=detach_encoder)
+    def forward(self, obs, compute_pi=True, compute_log_pi=True, detach_encoder=False):
 
-        mu, log_std = self.trunk(obs).chunk(2, dim=-1)
+        feats = self.encoder(obs[0], detach=detach_encoder)
+        if 'proprioception' in self.obs_space:
+            state = torch.as_tensor(obs[1], dtype=torch.float32, device = device)
+            feats = torch.cat([feats.squeeze(0),state],-1)
+        #### HERE TORCH CONCAT #####
+        mu, log_std = self.trunk(feats).chunk(2, dim=-1)
 
         # constrain log_std inside [log_std_min, log_std_max]
         log_std = torch.tanh(log_std)
@@ -136,22 +140,24 @@ class QFunction(nn.Module):
 class Critic(nn.Module):
     """Critic network, employes two q-functions."""
     def __init__(
-        self, obs_shape, action_shape, hidden_dim, encoder_type,
+        self, obs_space, act_space, hidden_dim, encoder_type,
         encoder_feature_dim, num_layers, num_filters
     ):
         super().__init__()
 
 
         self.encoder = make_encoder(
-            encoder_type, obs_shape, encoder_feature_dim, num_layers,
+            encoder_type, obs_space['camera'], encoder_feature_dim, num_layers,
             num_filters
         )
 
+        self.feature_dim = encoder_feature_dim + obs_space['proprioception'][0] if 'proprioception' in obs_space else encoder_feature_dim
+
         self.Q1 = QFunction(
-            self.encoder.feature_dim, action_shape[0], hidden_dim
+            self.feature_dim, act_space.shape[0], hidden_dim
         )
         self.Q2 = QFunction(
-            self.encoder.feature_dim, action_shape[0], hidden_dim
+            self.feature_dim, act_space.shape[0], hidden_dim
         )
 
         self.outputs = dict()
@@ -159,10 +165,12 @@ class Critic(nn.Module):
 
     def forward(self, obs, action, detach_encoder=False):
         # detach_encoder allows to stop gradient propogation to encoder
-        obs = self.encoder(obs, detach=detach_encoder)
-
-        q1 = self.Q1(obs, action)
-        q2 = self.Q2(obs, action)
+        feats = self.encoder(obs[0], detach=detach_encoder)
+        if 'proprioception' in self.obs_space:
+            state = torch.as_tensor(obs[1], dtype=torch.float32, device = device)
+            feats = torch.cat([feats.squeeze(0),state],-1)
+        q1 = self.Q1(feats, action)
+        q2 = self.Q2(feats, action)
 
         self.outputs['q1'] = q1
         self.outputs['q2'] = q2
@@ -187,8 +195,8 @@ class SacAeAgent(object):
     """SAC+AE algorithm."""
     def __init__(
         self,
-        obs_shape,
-        action_shape,
+        obs_space,
+        act_space,
         device,
         hidden_dim=256,
         discount=0.99,
@@ -216,6 +224,8 @@ class SacAeAgent(object):
         num_layers=4,
         num_filters=32
     ):
+        self.obs_space = obs_space
+        self.act_space = act_space
         self.device = device
         self.discount = discount
         self.critic_tau = critic_tau
@@ -226,18 +236,18 @@ class SacAeAgent(object):
         self.decoder_latent_lambda = decoder_latent_lambda
 
         self.actor = Actor(
-            obs_shape, action_shape, hidden_dim, encoder_type,
+            obs_space, act_space, hidden_dim, encoder_type,
             encoder_feature_dim, actor_log_std_min, actor_log_std_max,
             num_layers, num_filters
         ).to(device)
 
         self.critic = Critic(
-            obs_shape, action_shape, hidden_dim, encoder_type,
+            obs_space, act_space, hidden_dim, encoder_type,
             encoder_feature_dim, num_layers, num_filters
         ).to(device)
 
         self.critic_target = Critic(
-            obs_shape, action_shape, hidden_dim, encoder_type,
+            obs_space, act_space, hidden_dim, encoder_type,
             encoder_feature_dim, num_layers, num_filters
         ).to(device)
 
@@ -249,13 +259,13 @@ class SacAeAgent(object):
         self.log_alpha = torch.tensor(np.log(init_temperature)).to(device)
         self.log_alpha.requires_grad = True
         # set target entropy to -|A|
-        self.target_entropy = -np.prod(action_shape)
+        self.target_entropy = -np.prod(act_space.shape)
 
         self.decoder = None
         if decoder_type != 'identity':
             # create decoder
             self.decoder = make_decoder(
-                decoder_type, obs_shape, encoder_feature_dim, num_layers,
+                decoder_type, obs_space['camera'], encoder_feature_dim, num_layers,
                 num_filters
             ).to(device)
             self.decoder.apply(weight_init)

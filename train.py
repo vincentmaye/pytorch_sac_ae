@@ -20,7 +20,7 @@ from sai2_environment.robot_env import RobotEnv
 from sai2_environment.action_space import ActionSpace
 
 param_set = 'default' # should be mini or default
-save = True # True or false, if FTrue save model etc., else save nothing
+save = False # True or false, if FTrue save model etc., else save nothing
 
 def parse_args():
     parser = argparse.ArgumentParser()
@@ -87,7 +87,7 @@ def parse_args():
         # replay buffer
         parser.add_argument('--replay_buffer_capacity', default=100000, type=int) # Changed from 1e7 to 1e6
         # train
-        parser.add_argument('--init_steps', default=100, type=int) # Was 1000 before
+        parser.add_argument('--init_steps', default=20, type=int) # Was 1000 before
         parser.add_argument('--num_train_steps', default=100000, type=int)
         parser.add_argument('--batch_size', default=128, type=int)
         parser.add_argument('--hidden_dim', default=1024, type=int)
@@ -111,11 +111,14 @@ def evaluate(env, agent, video, num_episodes, L, step):
         video.init(enabled=(i == 0))
         done = False
         episode_reward = 0
+        step_counter = 0
         while not done:
             with utils.eval_mode(agent):
                 action = agent.select_action(obs)
-                print("Evaluation action: {}".format(action))
+                action = np.multiply(action,env.action_space.high)
             obs, reward, done, _ = env.step(action)
+            print("TE: {}   | TS: {}   | TR: {:.4f} | TER: {:.4f} | TA: {}".format(i, step_counter, round(reward,4), round(episode_reward,4), action))
+            step_counter += 1
             video.record(env)
             episode_reward += reward
         video.save('%d.mp4' % step)
@@ -193,8 +196,8 @@ def main():
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
     # the dmc2gym wrapper standardizes actions
-    #assert env.action_space.low.min() >= -1
-    #assert env.action_space.high.max() <= 1
+    #assert env.action_space.low.min()   >= -1
+    #assert env.action_space.high.max()  <=  1
 
     replay_buffer = utils.ReplayBuffer(
         obs_shape=env.observation_space['camera'],
@@ -249,6 +252,8 @@ def main():
         else:
             with utils.eval_mode(agent):
                 action = agent.sample_action(obs)
+                temp = action
+                action = np.multiply(action, env.action_space.high)
 
         # run training update
         if step >= args.init_steps:
@@ -257,7 +262,7 @@ def main():
                 agent.update(replay_buffer, L, step)
 
         next_obs, reward, done, _ = env.step(action)
-        print("E: {}   | S: {}   | R: {:.4f} | ER: {:.4f}".format(episode, step, round(reward,4), round(episode_reward,4)))
+        print("E: {}   | S: {}   | R: {:.4f} | ER: {:.4f} | A: {}".format(episode, step, round(reward,4), round(episode_reward,4), action))
 
         # allow infinit bootstrap
         done_bool = 0 if episode_step + 1 == env._max_episode_steps else float(

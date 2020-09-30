@@ -19,8 +19,8 @@ from sac_ae import SacAeAgent
 from sai2_environment.robot_env import RobotEnv
 from sai2_environment.action_space import ActionSpace
 
-param_set = 'default' # should be mini or default
-save = False # True or false, if FTrue save model etc., else save nothing
+param_set = 'test' # should be mini or default or test
+save = True # True or false, if FTrue save model etc., else save nothing
 
 def parse_args():
     parser = argparse.ArgumentParser()
@@ -42,7 +42,7 @@ def parse_args():
     parser.add_argument('--actor_log_std_max', default=2, type=float)
     # encoder/decoder
     parser.add_argument('--encoder_type', default='pixel', type=str)
-    parser.add_argument('--encoder_feature_dim', default=50, type=int)
+    parser.add_argument('--encoder_feature_dim', default=122, type=int)
     parser.add_argument('--encoder_lr', default=1e-3, type=float)
     parser.add_argument('--encoder_tau', default=0.05, type=float)
     parser.add_argument('--alpha_beta', default=0.5, type=float)
@@ -61,7 +61,7 @@ def parse_args():
     parser.add_argument('--init_temperature', default=0.1, type=float)
     parser.add_argument('--alpha_lr', default=1e-4, type=float)
     # save
-    parser.add_argument('--save_tb', default=save, action='store_true')
+    parser.add_argument('--save_tb', default=True, action='store_true')
     parser.add_argument('--save_model', default=save, action='store_true')
     parser.add_argument('--save_buffer', default=save, action='store_true')
     parser.add_argument('--save_video', default=save, action='store_true')
@@ -91,6 +91,22 @@ def parse_args():
         parser.add_argument('--num_train_steps', default=100000, type=int)
         parser.add_argument('--batch_size', default=128, type=int)
         parser.add_argument('--hidden_dim', default=1024, type=int)
+        # eval
+        parser.add_argument('--eval_freq', default=1000, type=int)
+        parser.add_argument('--num_eval_episodes', default=5, type=int)
+        # critic
+        parser.add_argument('--critic_target_update_freq', default=2, type=int)
+        # actor
+        parser.add_argument('--actor_update_freq', default=2, type=int)
+
+    elif param_set == 'test':
+        # replay buffer
+        parser.add_argument('--replay_buffer_capacity', default=100000, type=int) # Changed from 1e7 to 1e6
+        # train
+        parser.add_argument('--init_steps', default=3000, type=int) # Was 1000 before
+        parser.add_argument('--num_train_steps', default=100000, type=int)
+        parser.add_argument('--batch_size', default=128, type=int)
+        parser.add_argument('--hidden_dim', default=512, type=int)
         # eval
         parser.add_argument('--eval_freq', default=1000, type=int)
         parser.add_argument('--num_eval_episodes', default=5, type=int)
@@ -216,7 +232,7 @@ def main():
 
     L = Logger(args.work_dir, use_tb=args.save_tb)
 
-    episode, episode_reward, done = 0, 0, True
+    episode, episode_reward, prev_episode_reward, done = 0, 0, 0, True
     start_time = time.time()
     for step in range(args.num_train_steps):
         if done:
@@ -236,12 +252,9 @@ def main():
 
             L.log('train/episode_reward', episode_reward, step)
 
-            a_anti_stuck = np.array([0,0,0.1,0,0,0])
-            env.step(a_anti_stuck)
+            env.step(np.array([0,0,0.1,0,0,0])) # Prevent getting stuck
             obs = env.reset()
-            done = False
-            episode_reward = 0
-            episode_step = 0
+            done, episode_reward, episode_step = False, 0, 0
             episode += 1
 
             L.log('train/episode', episode, step)
@@ -253,6 +266,7 @@ def main():
             with utils.eval_mode(agent):
                 action = agent.sample_action(obs)
                 temp = action
+                print("Temp action: {}".format(temp))
                 action = np.multiply(action, env.action_space.high)
 
         # run training update
@@ -263,6 +277,13 @@ def main():
 
         next_obs, reward, done, _ = env.step(action)
         print("E: {}   | S: {}   | R: {:.4f} | ER: {:.4f} | A: {}".format(episode, step, round(reward,4), round(episode_reward,4), action))
+
+        # Reset environment if agent gets stuck (stuck means for 100 steps no increase in reward)
+        if step % 100 == 0 and step > 0:
+            if np.abs(prev_episode_reward - episode_reward) < 1e-5: # If change in reward is negligible after 100 steps restart
+                env.step(np.array([0,0,0.1,0,0,0]))
+                obs = env.reset()
+            prev_episode_reward = episode_reward
 
         # allow infinit bootstrap
         done_bool = 0 if episode_step + 1 == env._max_episode_steps else float(
